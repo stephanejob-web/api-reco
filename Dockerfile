@@ -21,8 +21,9 @@ RUN python -c "\
 from huggingface_hub import hf_hub_download; \
 hf_hub_download('Subh775/Threat-Detection-YOLOv8n', filename='weights/best.pt')"
 RUN python -c "\
-from transformers import pipeline as hf_pipeline; \
-hf_pipeline('image-classification', model='jaranohaal/vit-base-violence-detection', device=-1)"
+from transformers import ViTForImageClassification, ViTImageProcessor; \
+ViTImageProcessor.from_pretrained('jaranohaal/vit-base-violence-detection'); \
+ViTForImageClassification.from_pretrained('jaranohaal/vit-base-violence-detection')"
 
 # Copie du code
 COPY main.py .

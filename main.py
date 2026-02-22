@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from nudenet import NudeDetector
 from ultralytics import YOLO
 from huggingface_hub import hf_hub_download
-from transformers import pipeline as hf_pipeline
+from transformers import pipeline as hf_pipeline, ViTForImageClassification, ViTImageProcessor
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -57,9 +57,12 @@ _weapon_model_path = hf_hub_download(
 )
 weapon_model = YOLO(_weapon_model_path)
 
+_gore_processor = ViTImageProcessor.from_pretrained("jaranohaal/vit-base-violence-detection")
+_gore_model = ViTForImageClassification.from_pretrained("jaranohaal/vit-base-violence-detection")
 gore_classifier = hf_pipeline(
     "image-classification",
-    model="jaranohaal/vit-base-violence-detection",
+    model=_gore_model,
+    image_processor=_gore_processor,
     device=-1,  # CPU
 )
 
