@@ -1,0 +1,9 @@
+venv/
+__pycache__/
+*.pyc
+.git/
+uploads/
+frames/
+*.log
+test_videos/
+debug_flagged_*.jpg

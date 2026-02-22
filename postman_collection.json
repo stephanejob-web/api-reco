@@ -1,0 +1,181 @@
+{
+  "info": {
+    "name": "Mini-YouTube Content Scanner",
+    "description": "API de modération automatique de vidéos. Détecte la pornographie et les armes frame par frame.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Scan Video",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "file",
+              "type": "file",
+              "src": "",
+              "description": "Fichier vidéo à analyser (mp4, avi, mov, mkv — max 2 minutes)"
+            }
+          ]
+        },
+        "url": {
+          "raw": "http://localhost:7842/scan-video",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "7842",
+          "path": ["scan-video"]
+        },
+        "description": "Envoie une vidéo en form-data et retourne un verdict de modération.\n\n**Réponses possibles :**\n- `approved` → vidéo propre\n- `rejected_porn` → contenu pornographique détecté\n- `rejected_violence` → arme détectée (pistolet, grenade...)\n\n**Erreurs :**\n- `400` → vidéo trop longue (> 2 min)\n- `422` → fichier invalide"
+      },
+      "response": [
+        {
+          "name": "Approved",
+          "originalRequest": {
+            "method": "POST",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": ""
+                }
+              ]
+            },
+            "url": {
+              "raw": "http://localhost:7842/scan-video",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "7842",
+              "path": ["scan-video"]
+            }
+          },
+          "status": "OK",
+          "code": 200,
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "body": "{\n    \"status\": \"approved\"\n}"
+        },
+        {
+          "name": "Rejected — Porn",
+          "originalRequest": {
+            "method": "POST",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": ""
+                }
+              ]
+            },
+            "url": {
+              "raw": "http://localhost:7842/scan-video",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "7842",
+              "path": ["scan-video"]
+            }
+          },
+          "status": "OK",
+          "code": 200,
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "body": "{\n    \"status\": \"rejected_porn\"\n}"
+        },
+        {
+          "name": "Rejected — Violence",
+          "originalRequest": {
+            "method": "POST",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": ""
+                }
+              ]
+            },
+            "url": {
+              "raw": "http://localhost:7842/scan-video",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "7842",
+              "path": ["scan-video"]
+            }
+          },
+          "status": "OK",
+          "code": 200,
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "body": "{\n    \"status\": \"rejected_violence\"\n}"
+        },
+        {
+          "name": "Error — Video Too Long",
+          "originalRequest": {
+            "method": "POST",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": ""
+                }
+              ]
+            },
+            "url": {
+              "raw": "http://localhost:7842/scan-video",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "7842",
+              "path": ["scan-video"]
+            }
+          },
+          "status": "Bad Request",
+          "code": 400,
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "body": "{\n    \"detail\": {\n        \"error\": \"video_too_long\",\n        \"message\": \"La vidéo dépasse 2 minutes. Maximum autorisé : 120s.\"\n    }\n}"
+        }
+      ]
+    },
+    {
+      "name": "Health Check (Docs)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:7842/docs",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "7842",
+          "path": ["docs"]
+        },
+        "description": "Ouvre la documentation Swagger interactive de l'API."
+      },
+      "response": []
+    }
+  ]
+}

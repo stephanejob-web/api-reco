@@ -25,8 +25,8 @@ Extraction de frames (1 frame / 2s via FFmpeg)
       │
       ▼
 Pour chaque frame :
-  ├── NudeNet  → nudité détectée ? → rejected_porn
-  └── YOLOv8m → arme détectée ?   → rejected_violence
+  ├── NudeNet        → nudité exposée sur 1+ frame  → rejected_porn
+  └── Threat-Detection YOLOv8n → arme sur 2+ frames → rejected_violence
       │
       ▼
 { "status": "approved" }
@@ -41,15 +41,16 @@ Pour chaque frame :
 - **Technologie** : réseau de neurones ONNX entraîné spécifiquement sur la nudité humaine
 - **Labels surveillés** : `FEMALE_GENITALIA_EXPOSED`, `MALE_GENITALIA_EXPOSED`, `FEMALE_BREAST_EXPOSED`, `BUTTOCKS_EXPOSED`, `ANUS_EXPOSED`
 - **Seuil de confiance** : 0.55 (55%)
+- Un maillot de bain ou des vêtements couvrants ne déclenchent **pas** ce détecteur
 
-### YOLOv8m (medium)
-- **Rôle** : détection d'armes
-- **Technologie** : You Only Look Once v8, variante medium — entraîné sur le dataset COCO (80 classes)
-- **Classes surveillées** : `knife`, `scissors`
-- **Seuil de confiance** : 0.5 (50%)
-- **Précision** : mAP50 ≈ 50.2 sur COCO
-
-> Le modèle `yolov8m.pt` (~50 Mo) est téléchargé automatiquement au premier démarrage.
+### Threat-Detection YOLOv8n (Subh775)
+- **Rôle** : détection d'armes et menaces
+- **Technologie** : YOLOv8 nano fine-tuné sur un dataset d'armes
+- **Classes surveillées** : `Gun`, `grenade`, `explosion`
+- **Seuil de confiance** : 0.30 (30%)
+- **Précision** : mAP50 ≈ 81%, précision Gun ≈ 96.7%
+- Déclenche uniquement si l'arme est détectée sur **au moins 2 frames** (évite les faux positifs)
+- Modèle téléchargé automatiquement depuis HuggingFace au démarrage
 
 ---
 
@@ -60,19 +61,52 @@ Pour chaque frame :
 | API | FastAPI + Uvicorn |
 | Extraction frames | FFmpeg |
 | Détection nudité | NudeNet + ONNX Runtime |
-| Détection armes | Ultralytics YOLOv8m + PyTorch |
+| Détection armes | Threat-Detection YOLOv8n + PyTorch |
 | Runtime | Python 3.11 |
+| Port | 7842 |
 
 ---
 
 ## Installation
 
-### Prérequis
+### Option 1 — Docker (recommandée)
+
+La méthode la plus simple. Aucune installation de Python ou FFmpeg requise — tout est dans le conteneur.
+
+**Prérequis :** [Docker Desktop](https://www.docker.com/products/docker-desktop/) installé et lancé.
+
+```bash
+# 1. Cloner le repo
+git clone <url-du-repo>
+cd api-reco
+
+# 2. Builder et lancer le conteneur
+docker compose up --build
+```
+
+Le premier build télécharge les modèles (~500 Mo au total). Les lancements suivants sont instantanés.
+
+```bash
+# Lancer sans rebuild (après le premier build)
+docker compose up
+
+# Lancer en arrière-plan
+docker compose up -d
+
+# Arrêter
+docker compose down
+```
+
+---
+
+### Option 2 — Installation manuelle (macOS)
+
+#### Prérequis
 - Python 3.11 (via pyenv)
 - FFmpeg
 
 ```bash
-# Installer FFmpeg (macOS)
+# Installer FFmpeg
 brew install ffmpeg
 
 # Installer pyenv si nécessaire
@@ -82,7 +116,7 @@ curl https://pyenv.run | bash
 pyenv install 3.11.9
 ```
 
-### Setup
+#### Setup
 
 ```bash
 # Créer le virtualenv avec Python 3.11
@@ -93,11 +127,11 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### Lancer le serveur
+#### Lancer le serveur
 
 ```bash
 source venv/bin/activate
-uvicorn main:app --host 0.0.0.0 --port 8000
+uvicorn main:app --host 0.0.0.0 --port 7842
 ```
 
 ---
@@ -136,17 +170,17 @@ Content-Type: multipart/form-data
 
 ---
 
-### Test avec Postman
+## Test avec Postman
 
 1. Méthode : `POST`
-2. URL : `http://localhost:8000/scan-video`
+2. URL : `http://localhost:7842/scan-video`
 3. Body → `form-data` → clé `file`, type `File`
 4. Sélectionner une vidéo et envoyer
 
 ### Documentation interactive
 
 ```
-http://localhost:8000/docs
+http://localhost:7842/docs
 ```
 
 ---
@@ -154,5 +188,5 @@ http://localhost:8000/docs
 ## Limites
 
 - Durée maximale : **2 minutes**
-- Détection d'armes limitée aux classes COCO (`knife`, `scissors`) — les armes à feu ne sont pas détectées par ce modèle
-- Performances dépendantes du CPU (pas de GPU requis, mais le traitement est plus lent)
+- Détection d'armes limitée à `Gun`, `grenade`, `explosion` — les couteaux sont exclus (trop de faux positifs)
+- Performances dépendantes du CPU (pas de GPU requis, mais le traitement est plus lent sur des machines peu puissantes)

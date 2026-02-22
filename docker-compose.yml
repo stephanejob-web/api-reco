@@ -1,0 +1,6 @@
+services:
+  api:
+    build: .
+    ports:
+      - "7842:7842"
+    restart: unless-stopped
