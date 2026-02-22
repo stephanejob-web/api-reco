@@ -2,22 +2,20 @@ import os
 import shutil
 import subprocess
 import glob
-import cv2
-import numpy as np
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.responses import JSONResponse
 from nudenet import NudeDetector
 from ultralytics import YOLO
+from huggingface_hub import hf_hub_download
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 UPLOADS_DIR = "uploads"
 FRAMES_DIR = "frames"
-MAX_DURATION_SECONDS = 120          # 2 minutes
-FRAME_INTERVAL_SECONDS = 5
+MAX_DURATION_SECONDS = 120
+FRAME_INTERVAL_SECONDS = 2
 
-# NudeNet labels considérés comme problématiques
 NUDE_LABELS = {
     "FEMALE_GENITALIA_EXPOSED",
     "MALE_GENITALIA_EXPOSED",
@@ -26,16 +24,14 @@ NUDE_LABELS = {
     "ANUS_EXPOSED",
 }
 
-# Classes COCO (YOLOv8) considérées comme violentes
-VIOLENCE_CLASSES = {"knife", "scissors"}
+# Classes du modèle spécialisé Threat-Detection
+WEAPON_CLASSES = {"Gun", "grenade", "explosion"}
 
-# Seuils de confiance
-NUDE_SCORE_THRESHOLD = 0.6
-YOLO_SCORE_THRESHOLD = 0.5
-RED_PIXEL_RATIO_THRESHOLD = 0.02   # 2 % de pixels rouges → suspicion de sang
+NUDE_SCORE_THRESHOLD = 0.55
+WEAPON_SCORE_THRESHOLD = 0.30
 
 # ---------------------------------------------------------------------------
-# Initialisation (modèles chargés une seule fois au démarrage)
+# Initialisation
 # ---------------------------------------------------------------------------
 os.makedirs(UPLOADS_DIR, exist_ok=True)
 os.makedirs(FRAMES_DIR, exist_ok=True)
@@ -43,7 +39,12 @@ os.makedirs(FRAMES_DIR, exist_ok=True)
 app = FastAPI(title="Mini-YouTube Content Scanner", version="1.0.0")
 
 nude_detector = NudeDetector()
-yolo_model = YOLO("yolov8n.pt")   # téléchargé automatiquement (~6 Mo)
+
+_weapon_model_path = hf_hub_download(
+    repo_id="Subh775/Threat-Detection-YOLOv8n",
+    filename="weights/best.pt",
+)
+weapon_model = YOLO(_weapon_model_path)
 
 
 # ---------------------------------------------------------------------------
@@ -51,7 +52,6 @@ yolo_model = YOLO("yolov8n.pt")   # téléchargé automatiquement (~6 Mo)
 # ---------------------------------------------------------------------------
 
 def get_video_duration(video_path: str) -> float:
-    """Retourne la durée en secondes via ffprobe."""
     result = subprocess.run(
         [
             "ffprobe", "-v", "error",
@@ -67,13 +67,12 @@ def get_video_duration(video_path: str) -> float:
     return float(raw)
 
 
-def extract_frames(video_path: str, output_dir: str, interval: int = FRAME_INTERVAL_SECONDS) -> list[str]:
-    """Extrait une frame toutes les `interval` secondes via FFmpeg."""
+def extract_frames(video_path: str, output_dir: str) -> list[str]:
     pattern = os.path.join(output_dir, "frame_%04d.jpg")
     subprocess.run(
         [
             "ffmpeg", "-y", "-i", video_path,
-            "-vf", f"fps=1/{interval}",
+            "-vf", f"fps=1/{FRAME_INTERVAL_SECONDS}",
             "-q:v", "2", pattern,
         ],
         capture_output=True, timeout=120, check=True,
@@ -82,7 +81,6 @@ def extract_frames(video_path: str, output_dir: str, interval: int = FRAME_INTER
 
 
 def cleanup_frames(output_dir: str) -> None:
-    """Supprime toutes les frames extraites."""
     for f in glob.glob(os.path.join(output_dir, "frame_*.jpg")):
         try:
             os.remove(f)
@@ -91,40 +89,29 @@ def cleanup_frames(output_dir: str) -> None:
 
 
 def has_nudity(frame_path: str) -> bool:
-    """Détecte la nudité avec NudeNet."""
     detections = nude_detector.detect(frame_path)
+    for d in detections:
+        print(f"[NUDITY] {d.get('class')} conf={d.get('score', 0):.2f} frame={os.path.basename(frame_path)}")
     return any(
         d.get("class") in NUDE_LABELS and d.get("score", 0) >= NUDE_SCORE_THRESHOLD
         for d in detections
     )
 
 
-def has_violence(frame_path: str) -> bool:
-    """Détecte armes / violence avec YOLOv8."""
-    results = yolo_model(frame_path, verbose=False, conf=YOLO_SCORE_THRESHOLD)
+def has_weapon(frame_path: str) -> bool:
+    results = weapon_model(frame_path, verbose=False, conf=0.1)
     for result in results:
         for box in result.boxes:
-            label = yolo_model.names[int(box.cls)]
-            if label in VIOLENCE_CLASSES:
+            label = weapon_model.names[int(box.cls)]
+            conf = float(box.conf)
+            print(f"[WEAPON] {label} conf={conf:.2f} frame={os.path.basename(frame_path)}")
+            if label in WEAPON_CLASSES and conf >= WEAPON_SCORE_THRESHOLD:
                 return True
     return False
 
 
-def has_blood(frame_path: str) -> bool:
-    """Détecte les zones rouges (sang potentiel) avec OpenCV."""
-    img = cv2.imread(frame_path)
-    if img is None:
-        return False
-    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-    mask1 = cv2.inRange(hsv, np.array([0,   70, 50]), np.array([10,  255, 255]))
-    mask2 = cv2.inRange(hsv, np.array([160, 70, 50]), np.array([180, 255, 255]))
-    red_mask = cv2.bitwise_or(mask1, mask2)
-    total = img.shape[0] * img.shape[1]
-    return (cv2.countNonZero(red_mask) / total) >= RED_PIXEL_RATIO_THRESHOLD
-
-
 # ---------------------------------------------------------------------------
-# Endpoint principal
+# Endpoint
 # ---------------------------------------------------------------------------
 
 @app.post("/scan-video")
@@ -143,13 +130,12 @@ async def scan_video(file: UploadFile = File(...)):
         shutil.copyfileobj(file.file, buffer)
 
     try:
-        # 1. Vérification de la durée
         try:
             duration = get_video_duration(video_path)
         except (ValueError, subprocess.TimeoutExpired, subprocess.CalledProcessError) as exc:
             raise HTTPException(status_code=422, detail=f"Impossible de lire la vidéo : {exc}")
 
-        if duration > MAX_DURATION_SECONDS:
+        if int(duration) > MAX_DURATION_SECONDS:
             raise HTTPException(
                 status_code=400,
                 detail={
@@ -161,7 +147,6 @@ async def scan_video(file: UploadFile = File(...)):
                 },
             )
 
-        # 2. Extraction des frames via FFmpeg
         try:
             frames = extract_frames(video_path, FRAMES_DIR)
         except subprocess.CalledProcessError as exc:
@@ -170,15 +155,17 @@ async def scan_video(file: UploadFile = File(...)):
         if not frames:
             raise HTTPException(status_code=422, detail="Aucune frame extraite.")
 
-        # 3. Analyse frame par frame — arrêt au premier problème
         status = "approved"
+        weapon_hits = 0
         for frame_path in frames:
             if has_nudity(frame_path):
                 status = "rejected_porn"
                 break
-            if has_violence(frame_path) or has_blood(frame_path):
-                status = "rejected_violence"
-                break
+            if has_weapon(frame_path):
+                weapon_hits += 1
+                if weapon_hits >= 2:
+                    status = "rejected_violence"
+                    break
 
     finally:
         cleanup_frames(FRAMES_DIR)
