@@ -7,7 +7,11 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Installation des dépendances Python
+# PyTorch CPU-only en premier (évite le wheel CUDA de 2 GB)
+RUN pip install --no-cache-dir torch torchvision \
+    --index-url https://download.pytorch.org/whl/cpu
+
+# Puis les autres dépendances
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
@@ -16,12 +20,15 @@ RUN python -c "from nudenet import NudeDetector; NudeDetector()"
 RUN python -c "\
 from huggingface_hub import hf_hub_download; \
 hf_hub_download('Subh775/Threat-Detection-YOLOv8n', filename='weights/best.pt')"
+RUN python -c "\
+from transformers import pipeline as hf_pipeline; \
+hf_pipeline('image-classification', model='jaranohaal/vit-base-violence-detection', device=-1)"
 
 # Copie du code
 COPY main.py .
 
-# Dossiers de travail
-RUN mkdir -p uploads frames
+# Dossier de travail (frames n'est plus nécessaire)
+RUN mkdir -p uploads
 
 EXPOSE 7842
 

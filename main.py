@@ -2,17 +2,20 @@ import os
 import shutil
 import subprocess
 import glob
+import tempfile
+import filetype
+from datetime import datetime, timezone
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.responses import JSONResponse
 from nudenet import NudeDetector
 from ultralytics import YOLO
 from huggingface_hub import hf_hub_download
+from transformers import pipeline as hf_pipeline
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 UPLOADS_DIR = "uploads"
-FRAMES_DIR = "frames"
 MAX_DURATION_SECONDS = 120
 FRAME_INTERVAL_SECONDS = 2
 
@@ -27,16 +30,24 @@ NUDE_LABELS = {
 # Classes du modèle spécialisé Threat-Detection
 WEAPON_CLASSES = {"Gun", "grenade", "explosion"}
 
-NUDE_SCORE_THRESHOLD = 0.55
+NUDE_SCORE_THRESHOLD = 0.40
 WEAPON_SCORE_THRESHOLD = 0.30
+GORE_SCORE_THRESHOLD = 0.75
+
+ALLOWED_VIDEO_MIMES = {
+    "video/mp4",
+    "video/x-msvideo",
+    "video/quicktime",
+    "video/x-matroska",
+    "video/webm",
+}
 
 # ---------------------------------------------------------------------------
 # Initialisation
 # ---------------------------------------------------------------------------
 os.makedirs(UPLOADS_DIR, exist_ok=True)
-os.makedirs(FRAMES_DIR, exist_ok=True)
 
-app = FastAPI(title="Mini-YouTube Content Scanner", version="1.0.0")
+app = FastAPI(title="Mini-YouTube Content Scanner", version="2.0.0")
 
 nude_detector = NudeDetector()
 
@@ -45,6 +56,12 @@ _weapon_model_path = hf_hub_download(
     filename="weights/best.pt",
 )
 weapon_model = YOLO(_weapon_model_path)
+
+gore_classifier = hf_pipeline(
+    "image-classification",
+    model="jaranohaal/vit-base-violence-detection",
+    device=-1,  # CPU
+)
 
 
 # ---------------------------------------------------------------------------
@@ -80,14 +97,6 @@ def extract_frames(video_path: str, output_dir: str) -> list[str]:
     return sorted(glob.glob(os.path.join(output_dir, "frame_*.jpg")))
 
 
-def cleanup_frames(output_dir: str) -> None:
-    for f in glob.glob(os.path.join(output_dir, "frame_*.jpg")):
-        try:
-            os.remove(f)
-        except OSError:
-            pass
-
-
 def has_nudity(frame_path: str) -> bool:
     detections = nude_detector.detect(frame_path)
     for d in detections:
@@ -110,6 +119,17 @@ def has_weapon(frame_path: str) -> bool:
     return False
 
 
+def has_gore(frame_path: str) -> bool:
+    results = gore_classifier(frame_path)
+    for result in results:
+        label = result["label"]
+        score = result["score"]
+        print(f"[GORE] {label} conf={score:.2f} frame={os.path.basename(frame_path)}")
+        if label == "violent" and score >= GORE_SCORE_THRESHOLD:
+            return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Endpoint
 # ---------------------------------------------------------------------------
@@ -118,8 +138,26 @@ def has_weapon(frame_path: str) -> bool:
 async def scan_video(file: UploadFile = File(...)):
     """
     Reçoit une vidéo en form-data, l'analyse frame par frame et renvoie :
-      { "status": "approved" | "rejected_porn" | "rejected_violence" }
+      {
+        "status": "approved" | "rejected_porn" | "rejected_violence" | "rejected_gore",
+        "scanned_at": "<ISO 8601 UTC>",
+        "frames_analyzed": <int>
+      }
     """
+    # -- Validation MIME (magic bytes, avant écriture sur disque) ------------
+    header = await file.read(261)
+    await file.seek(0)
+    kind = filetype.guess(header)
+    if kind is None or kind.mime not in ALLOWED_VIDEO_MIMES:
+        raise HTTPException(
+            status_code=415,
+            detail={
+                "error": "unsupported_media_type",
+                "message": "Format non supporté. Acceptés : mp4, avi, mov, mkv, webm.",
+            },
+        )
+
+    # -- Sauvegarde de la vidéo ----------------------------------------------
     video_filename = (
         f"{os.path.splitext(file.filename)[0]}_{os.getpid()}"
         f"{os.path.splitext(file.filename)[1]}"
@@ -130,6 +168,7 @@ async def scan_video(file: UploadFile = File(...)):
         shutil.copyfileobj(file.file, buffer)
 
     try:
+        # -- Durée -----------------------------------------------------------
         try:
             duration = get_video_duration(video_path)
         except (ValueError, subprocess.TimeoutExpired, subprocess.CalledProcessError) as exc:
@@ -147,32 +186,52 @@ async def scan_video(file: UploadFile = File(...)):
                 },
             )
 
-        try:
-            frames = extract_frames(video_path, FRAMES_DIR)
-        except subprocess.CalledProcessError as exc:
-            raise HTTPException(status_code=422, detail=f"Erreur FFmpeg : {exc.stderr}")
+        # -- Extraction des frames dans un répertoire temporaire isolé -------
+        with tempfile.TemporaryDirectory() as tmp_frames_dir:
+            try:
+                frames = extract_frames(video_path, tmp_frames_dir)
+            except subprocess.CalledProcessError as exc:
+                raise HTTPException(status_code=422, detail=f"Erreur FFmpeg : {exc.stderr}")
 
-        if not frames:
-            raise HTTPException(status_code=422, detail="Aucune frame extraite.")
+            if not frames:
+                raise HTTPException(status_code=422, detail="Aucune frame extraite.")
 
-        status = "approved"
-        weapon_hits = 0
-        for frame_path in frames:
-            if has_nudity(frame_path):
-                status = "rejected_porn"
-                break
-            if has_weapon(frame_path):
-                weapon_hits += 1
-                if weapon_hits >= 2:
-                    status = "rejected_violence"
+            status = "approved"
+            weapon_hits = 0
+            gore_hits = 0
+            for frame_path in frames:
+                if has_nudity(frame_path):
+                    status = "rejected_porn"
                     break
+                if has_weapon(frame_path):
+                    weapon_hits += 1
+                    if weapon_hits >= 2:
+                        status = "rejected_violence"
+                        break
+                if has_gore(frame_path):
+                    gore_hits += 1
+                    if gore_hits >= 2:
+                        status = "rejected_gore"
+                        break
+
+            frames_analyzed = len(frames)
+        # nettoyage automatique à la sortie du `with`
 
     finally:
-        cleanup_frames(FRAMES_DIR)
         if os.path.exists(video_path):
             os.remove(video_path)
 
-    return JSONResponse(content={"status": status})
+    scanned_at = (
+        datetime.now(timezone.utc)
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z")
+    )
+
+    return JSONResponse(content={
+        "status": status,
+        "scanned_at": scanned_at,
+        "frames_analyzed": frames_analyzed,
+    })
 
 
 # ---------------------------------------------------------------------------
