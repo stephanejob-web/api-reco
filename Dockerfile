@@ -20,9 +20,6 @@ RUN python -c "from nudenet import NudeDetector; NudeDetector()"
 RUN python -c "\
 from huggingface_hub import hf_hub_download; \
 hf_hub_download('Subh775/Threat-Detection-YOLOv8n', filename='weights/best.pt')"
-RUN python -c "\
-from transformers import pipeline as hf_pipeline; \
-hf_pipeline('image-classification', model='Falconsai/nsfw_image_detection', device=-1)"
 
 # Copie du code
 COPY main.py .

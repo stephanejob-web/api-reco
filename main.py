@@ -10,7 +10,6 @@ from fastapi.responses import JSONResponse
 from nudenet import NudeDetector
 from ultralytics import YOLO
 from huggingface_hub import hf_hub_download
-from transformers import pipeline as hf_pipeline
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -31,8 +30,7 @@ NUDE_LABELS = {
 WEAPON_CLASSES = {"Gun", "grenade", "explosion"}
 
 NUDE_SCORE_THRESHOLD = 0.40
-WEAPON_SCORE_THRESHOLD = 0.30
-GORE_SCORE_THRESHOLD = 0.75
+WEAPON_SCORE_THRESHOLD = 0.65
 
 ALLOWED_VIDEO_MIMES = {
     "video/mp4",
@@ -56,12 +54,6 @@ _weapon_model_path = hf_hub_download(
     filename="weights/best.pt",
 )
 weapon_model = YOLO(_weapon_model_path)
-
-gore_classifier = hf_pipeline(
-    "image-classification",
-    model="Falconsai/nsfw_image_detection",
-    device=-1,  # CPU
-)
 
 
 # ---------------------------------------------------------------------------
@@ -119,17 +111,6 @@ def has_weapon(frame_path: str) -> bool:
     return False
 
 
-def has_gore(frame_path: str) -> bool:
-    results = gore_classifier(frame_path)
-    for result in results:
-        label = result["label"]
-        score = result["score"]
-        print(f"[GORE] {label} conf={score:.2f} frame={os.path.basename(frame_path)}")
-        if label == "nsfw" and score >= GORE_SCORE_THRESHOLD:
-            return True
-    return False
-
-
 # ---------------------------------------------------------------------------
 # Endpoint
 # ---------------------------------------------------------------------------
@@ -139,7 +120,7 @@ async def scan_video(file: UploadFile = File(...)):
     """
     Reçoit une vidéo en form-data, l'analyse frame par frame et renvoie :
       {
-        "status": "approved" | "rejected_porn" | "rejected_violence" | "rejected_gore",
+        "status": "approved" | "rejected_porn" | "rejected_violence",
         "scanned_at": "<ISO 8601 UTC>",
         "frames_analyzed": <int>
       }
@@ -198,20 +179,14 @@ async def scan_video(file: UploadFile = File(...)):
 
             status = "approved"
             weapon_hits = 0
-            gore_hits = 0
             for frame_path in frames:
                 if has_nudity(frame_path):
                     status = "rejected_porn"
                     break
                 if has_weapon(frame_path):
                     weapon_hits += 1
-                    if weapon_hits >= 2:
+                    if weapon_hits >= 3:
                         status = "rejected_violence"
-                        break
-                if has_gore(frame_path):
-                    gore_hits += 1
-                    if gore_hits >= 2:
-                        status = "rejected_gore"
                         break
 
             frames_analyzed = len(frames)
