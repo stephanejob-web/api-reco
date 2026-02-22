@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from nudenet import NudeDetector
 from ultralytics import YOLO
 from huggingface_hub import hf_hub_download
-from transformers import pipeline as hf_pipeline, ViTForImageClassification, ViTImageProcessor
+from transformers import pipeline as hf_pipeline
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -57,12 +57,9 @@ _weapon_model_path = hf_hub_download(
 )
 weapon_model = YOLO(_weapon_model_path)
 
-_gore_processor = ViTImageProcessor.from_pretrained("jaranohaal/vit-base-violence-detection")
-_gore_model = ViTForImageClassification.from_pretrained("jaranohaal/vit-base-violence-detection")
 gore_classifier = hf_pipeline(
     "image-classification",
-    model=_gore_model,
-    image_processor=_gore_processor,
+    model="Falconsai/nsfw_image_detection",
     device=-1,  # CPU
 )
 
@@ -128,7 +125,7 @@ def has_gore(frame_path: str) -> bool:
         label = result["label"]
         score = result["score"]
         print(f"[GORE] {label} conf={score:.2f} frame={os.path.basename(frame_path)}")
-        if label == "violent" and score >= GORE_SCORE_THRESHOLD:
+        if label == "nsfw" and score >= GORE_SCORE_THRESHOLD:
             return True
     return False
 
