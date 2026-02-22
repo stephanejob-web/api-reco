@@ -1,0 +1,31 @@
+# Environnement virtuel
+.venv/
+venv/
+env/
+
+# Modèles ML (trop lourds pour git)
+*.pt
+*.onnx
+*.weights
+
+# Dossiers runtime
+uploads/
+frames/
+
+# Cache Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
